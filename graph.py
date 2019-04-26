@@ -65,7 +65,7 @@ class pml_graph(object):
 
         def calculate_displacement(node, max_residual = 1.0):
 
-            ancestors = get_ancestors(node)[::-1]
+            ancestors = get_ancestors(node)
             location = deepcopy(node.center)
 
             for ancestor in ancestors:
