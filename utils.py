@@ -27,10 +27,8 @@ def tiles_for_bounds(bounds, buffer = None, buffer_fraction = None):
 
     tiles = []
     for y in range(0,num_y):
-        tile_row = []
         for x in range(0,num_x):
-            tile_row += [((d_tile*x+offset_x, d_tile*(x+1)+offset_x),(d_tile*y+offset_y, d_tile*(y+1)+offset_y))]
-        tiles += [tuple(tile_row)]
+            tiles += [((d_tile*x+offset_x, d_tile*(x+1)+offset_x),(d_tile*y+offset_y, d_tile*(y+1)+offset_y))]
     tiles = tuple(tiles)
     if buffer is None and buffer_fraction is None:
         buffered_tiles = None
@@ -40,14 +38,44 @@ def tiles_for_bounds(bounds, buffer = None, buffer_fraction = None):
         else:
             buffer_pixels = buffer
         buffered_tiles = []
-        for y in range(0,num_y):
-            buffered_tile_row = []
-            for x in range(0,num_x):
-                buffered_tile_row += [((tiles[y][x][0][0] - buffer_pixels,
-                                        tiles[y][x][0][1] + buffer_pixels),
-                                        (tiles[y][x][1][0] - buffer_pixels,
-                                        tiles[y][x][1][1] + buffer_pixels))]
-            buffered_tiles += [tuple(buffered_tile_row)]
+        for tile in tiles:
+            buffered_tiles += [((tile[0][0] - buffer_pixels,
+                                tile[0][1] + buffer_pixels),
+                                (tile[1][0] - buffer_pixels,
+                                tile[1][1] + buffer_pixels))]
         buffered_tiles = tuple(buffered_tiles)
 
     return (tiles, buffered_tiles)
+
+def get_xyz_from_pdal(pdal_array):
+
+    x = pdal_array[0].dtype.fields['X']
+    y = pdal_array[0].dtype.fields['Y']
+    z = pdal_array[0].dtype.fields['Z']
+    xyz = np.zeros((pdal_array[0].size, 3), dtype=np.float64)
+    xyz[:,0] = pdal_array[0].getfield(x[0], offset = x[1]).astype(np.float64)
+    xyz[:,1] = pdal_array[0].getfield(y[0], offset = y[1]).astype(np.float64)
+    xyz[:,2] = pdal_array[0].getfield(z[0], offset = z[1]).astype(np.float64)
+
+    return np.ascontiguousarray(xyz)
+
+def put_xyz_to_pdal(pdal_array, xyz):
+
+    from copy import deepcopy
+    output_pdal_array = deepcopy(pdal_array)
+    x = pdal_array[0].dtype.fields['X']
+    y = pdal_array[0].dtype.fields['Y']
+    z = pdal_array[0].dtype.fields['Z']
+    output_pdal_array[0].setfield(xyz[:,0].astype(x[0]), x[0], offset = x[1])
+    output_pdal_array[0].setfield(xyz[:,1].astype(y[0]), y[0], offset = y[1])
+    output_pdal_array[0].setfield(xyz[:,2].astype(z[0]), z[0], offset = z[1])
+    return output_pdal_array
+
+
+def transform_xyz(xyz, transform, center = np.array([0.0, 0.0, 0.0])):
+
+    xyzb = np.zeros((xyz.shape[0],4))
+    xyzb[:,0:3] = xyz - center
+    xyzb[:,3] = 1.0
+
+    return np.matmul(xyzb, transform.T)[:,0:3] + center
