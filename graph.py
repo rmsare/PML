@@ -1,5 +1,6 @@
 import networkx as nx
 import numpy as np
+from numpy.linalg import inv
 from copy import deepcopy
 
 class pml_node(object):
@@ -17,10 +18,11 @@ class pml_node(object):
 
 class pml_graph(object):
 
-    def __init__(self):
+    def __init__(self, center):
 
         self.__G = nx.DiGraph()
         self.__current_node_number = 0
+        self.__center = center
 
     def add_node(self, center, transform_matrix, dimensions, residual, from_node = None):
 
@@ -47,14 +49,6 @@ class pml_graph(object):
         def get_external_nodes():
             return [x[1]['node_info'] for x in self.__G.nodes(data=True) if self.__G.out_degree(x[0]) == 0]
 
-        def transform(location, node):
-
-            locationb = np.zeros((1, 4))
-            locationb[0, 0:3] = location - node.center
-            locationb[0, 3] = 1.0
-
-            return np.matmul(locationb, node.transform_matrix.T)[0, 0:3] + node.center
-
         def get_ancestors(node):
 
             if self.__G.in_degree(node.node_number) != 0:
@@ -66,12 +60,17 @@ class pml_graph(object):
         def calculate_displacement(node, max_residual = 1.0):
 
             ancestors = get_ancestors(node)
-            location = deepcopy(node.center)
+
+            location = deepcopy(np.array([node.center]))
 
             for ancestor in ancestors:
-                location = transform(location, ancestor)
+                location -= ancestor.center
+                location = np.concatenate((location,np.ones((1,1))), axis=1)
+                location = np.matmul(location, inv(ancestor.transform_matrix).T)[:,0:3]
+                location += ancestor.center
 
-            return node.center - location
+            displacement = np.array([node.center]) - location
+            return displacement[0,0], displacement[0,1], displacement[0,2]
 
         nodes = get_external_nodes()
         xy_u = []

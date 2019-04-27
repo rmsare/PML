@@ -170,10 +170,12 @@ def icp(fixed, moving, center = None):
 
 def icp_scale(fixed, moving, x, y, max_scale = 4, buffer_fraction = 0.5):
 
+    from numpy.linalg import inv
+
     base_dx = np.mean(np.diff(x))
     base_dy = np.mean(np.diff(y))
 
-    def calc_transform(fixed, moving, xc, yc, scale, center = None):
+    def calc_transform(fixed, moving, x, scale, center):
 
         dx = base_dx * np.power(2, scale)
         dy = base_dy * np.power(2, scale)
@@ -182,17 +184,10 @@ def icp_scale(fixed, moving, x, y, max_scale = 4, buffer_fraction = 0.5):
             fixed_tile_clip = fixed
             moving_tile_clip = moving
         else:
-            bounds = ((xc - dx, xc + dx), (yc - dy, yc + dy))
-            buffered_bounds = ((xc - (1+buffer_fraction), xc + (1+buffer_fraction)*dx), (yc - (1+buffer_fraction)*dy, yc + (1+buffer_fraction)*dy))
+            bounds = ((x[0] - dx, x[0] + dx), (x[1] - dy, x[1] + dy))
+            buffered_bounds = ((x[0] - (1+buffer_fraction), x[0] + (1+buffer_fraction)*dx), (x[1] - (1+buffer_fraction)*dy, x[1] + (1+buffer_fraction)*dy))
             fixed_tile_clip = crop(fixed, bounds)
             moving_tile_clip = crop(moving, buffered_bounds)
-
-        if center is None:
-            from utils import get_xyz_from_pdal
-            center = np.zeros((3))
-            center[0] = xc
-            center[1] = yc
-            center[2] = np.mean(get_xyz_from_pdal(fixed_tile_clip), axis=0)[2]
 
         if len(fixed_tile_clip[0]) > 5 and len(moving_tile_clip[0]) > 5:
             transformed_array, (transform_matrix, center, residual) = icp(fixed_tile_clip, moving_tile_clip,
@@ -207,14 +202,11 @@ def icp_scale(fixed, moving, x, y, max_scale = 4, buffer_fraction = 0.5):
 
         if scale != 0:
             scale -= 1
-            t_mat = calc_transform(fixed_tile_clip, transformed_array, xc, yc, scale, center = center)
+            newpos = calc_transform(fixed_tile_clip, transformed_array, x, scale, center)
+            return np.matmul(np.concatenate((np.array([newpos - center]), np.ones((1,1))), axis = 1), inv(transform_matrix).T)[0,0:3] + center
         else:
-            t_mat = np.array([[1.0, 0.0, 0.0, 0.0],
-                              [0.0, 1.0, 0.0, 0.0],
-                              [0.0, 0.0, 1.0, 0.0],
-                              [0.0, 0.0, 0.0, 1.0]])
+            return np.matmul(np.concatenate((np.array([center - center]), np.ones((1,1))), axis = 1), inv(transform_matrix).T)[0,0:3] + center
 
-        return np.matmul(t_mat, transform_matrix)
 
     fixed_array = read_file(fixed) if isinstance(fixed, str) else fixed
     moving_array = read_file(moving) if isinstance(moving, str) else moving
@@ -233,9 +225,9 @@ def icp_scale(fixed, moving, x, y, max_scale = 4, buffer_fraction = 0.5):
 
     def calculate_u((xc, yc), (i, j)):
         position = np.array([xc, yc, meanz])
-        transform_matrix = calc_transform(fixed_array, moving_array, xc, yc, max_scale, center = position)
+        u = calc_transform(fixed_array, moving_array, position, max_scale, position) - position
         print('done with: ', (i, j))
-        return (transform_matrix[0,3], transform_matrix[1,3], transform_matrix[2,3]), (i, j)
+        return u, (i, j)
 
     from dask import compute, delayed
 
@@ -244,9 +236,9 @@ def icp_scale(fixed, moving, x, y, max_scale = 4, buffer_fraction = 0.5):
     results = compute(*dask_tasks)
 
     for ((ux, uy, uz), (i, j)) in results:
-        UX[i,j] = ux
-        UY[i,j] = uy
-        UZ[i,j] = uz
+        UX[i,j] = -ux
+        UY[i,j] = -uy
+        UZ[i,j] = -uz
 
     return UX, UY, UZ
 
@@ -262,19 +254,33 @@ def icp_recursive(fixed, moving, min_dx = 1.0, min_size_to_thread = 1.5E4, buffe
             center_z = np.array([0.0]);
         return np.array([center_xy[0], center_xy[1], center_z])
 
+
+    fixed_array = read_file(fixed) if isinstance(fixed, str) else fixed
+    moving_array = read_file(moving) if isinstance(moving, str) else moving
+
+    bounds = get_bounds(fixed)
+
+    center = find_center(bounds, fixed_array)
+
+    from graph import pml_graph
+
+    graph = pml_graph(center)
+
+
     def icp_recursive_evaluation(fixed_tile, moving_tile, tile_extent, buffered_tile_extent, graph, parent_node, min_dx,
-                                 min_size_to_thread, buffer_fraction=0.5):
+                                 min_size_to_thread, buffer_fraction=0.5, center = center):
 
         in_dimensions = (tile_extent[0][1] - tile_extent[0][0], tile_extent[1][1] - tile_extent[1][0])
 
         if (in_dimensions[0] <= min_dx) or (in_dimensions[1] <= min_dx):
             return
 
-        def launch_nodask(fixed_tile_clip, graph, parent_node, min_dx):
+        node_center = find_center(tile_extent, fixed_array)
+
+        def launch_nodask(fixed_tile_clip, graph, parent_node, min_dx, center = center):
 
             from utils import tiles_for_bounds
 
-            center = find_center(tile_extent, fixed_tile_clip)
             (tiles, buffered_tiles) = tiles_for_bounds(tile_extent, buffer_fraction=buffer_fraction)
             transformed_array, (transform_matrix, center, residual) = ([np.array([])], (np.array([[1.0, 0.0, 0.0, 0.0],
                                                                                                   [0.0, 1.0, 0.0, 0.0],
@@ -282,19 +288,18 @@ def icp_recursive(fixed, moving, min_dx = 1.0, min_size_to_thread = 1.5E4, buffe
                                                                                                   [0.0, 0.0, 0.0,
                                                                                                    1.0]]),
                                                                                         center, None))
-            node = graph.add_node(center, transform_matrix, in_dimensions, residual, from_node=parent_node)
+            node = graph.add_node(node_center, transform_matrix, in_dimensions, residual, from_node=parent_node)
             [icp_recursive_evaluation(fixed_tile_clip, transformed_array, tile, buffered_tile, graph, node, min_dx,
                                       min_size_to_thread) for (tile, buffered_tile) in zip(tiles, buffered_tiles)]
 
-        def launch_dask(fixed_tile_clip, moving_tile_clip, graph, parent_node, min_dx):
+        def launch_dask(fixed_tile_clip, moving_tile_clip, graph, parent_node, min_dx, center = center):
 
             from utils import tiles_for_bounds
             from dask import compute, delayed
 
-            center = find_center(tile_extent, fixed_tile_clip)
             transformed_array, (transform_matrix, center, residual) = icp(fixed_tile_clip, moving_tile_clip,
                                                                           center=center)
-            node = graph.add_node(center, transform_matrix, in_dimensions, residual, from_node=parent_node)
+            node = graph.add_node(node_center, transform_matrix, in_dimensions, residual, from_node=parent_node)
             (tiles, buffered_tiles) = tiles_for_bounds(tile_extent, buffer_fraction=buffer_fraction)
             dask_tasks = [
                 delayed(icp_recursive_evaluation)(fixed_tile_clip, transformed_array, tile, buffered_tile, graph, node,
@@ -315,16 +320,6 @@ def icp_recursive(fixed, moving, min_dx = 1.0, min_size_to_thread = 1.5E4, buffe
         else:
             launch_nodask(fixed_tile, graph, parent_node, min_dx)
 
-    from graph import pml_graph
-
-    graph = pml_graph()
-
-    fixed_array = read_file(fixed) if isinstance(fixed, str) else fixed
-    moving_array = read_file(moving) if isinstance(moving, str) else moving
-
-    bounds = get_bounds(fixed)
-
-    center = find_center(bounds, fixed_array)
     dimensions = (bounds[0][1] - bounds[0][0], bounds[1][1] - bounds[1][0])
 
     transformed_array, (transform_matrix, center, residual) = icp(fixed_array, moving_array, center = center)
