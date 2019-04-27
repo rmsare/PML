@@ -236,9 +236,9 @@ def icp_scale(fixed, moving, x, y, max_scale = 4, buffer_fraction = 0.5):
     results = compute(*dask_tasks)
 
     for ((ux, uy, uz), (i, j)) in results:
-        UX[i,j] = -ux
-        UY[i,j] = -uy
-        UZ[i,j] = -uz
+        UX[i,j] = ux
+        UY[i,j] = uy
+        UZ[i,j] = uz
 
     return UX, UY, UZ
 
