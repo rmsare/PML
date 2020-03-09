@@ -168,6 +168,79 @@ def icp(fixed, moving, center = None):
     transformed_array = transform_pdal_array(moving_array, transform_matrix, center = center)
     return transformed_array, (transform_matrix, center, residual)
 
+def icp_calc_displacement(fixed_tile, moving_tile, center):
+
+    if len(fixed_tile[0]) > 5 and len(moving_tile[0]) > 5:
+        transformed_array, (transform_matrix, center, residual) = icp(fixed_tile, moving_tile,
+                                                                      center=center)
+    else:
+        transformed_array, (transform_matrix, center, residual) = ([np.array([])], (np.array([[1.0, 0.0, 0.0, 0.0],
+                                                                                              [0.0, 1.0, 0.0, 0.0],
+                                                                                              [0.0, 0.0, 1.0, 0.0],
+                                                                                              [0.0, 0.0, 0.0,
+                                                                                               1.0]]),
+                                                                                    center, None))
+
+    from numpy.linalg import inv
+    return inv(transform_matrix).T[-1,0:3]
+
+def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_window = None):
+
+    from dask import compute, delayed
+    import dask
+
+    base_dx = np.mean(np.diff(x)) if dx_window is None else dx_window
+    base_dy = np.mean(np.diff(y)) if dy_window is None else dy_window
+
+    (dx, dy) = (base_dx, base_dy)
+
+    X, Y = np.meshgrid(x, y)
+    UX = np.zeros_like(X)
+    UY = np.zeros_like(X)
+    UZ = np.zeros_like(X)
+    fixed_array = read_file(fixed) if isinstance(fixed, str) else fixed
+    moving_array = read_file(moving) if isinstance(moving, str) else moving
+
+    (ny, nx) = X.shape
+    from utils import get_xyz_from_pdal
+
+    def calc_u(data, i, j, xyc):
+        (fixed_array, moving_array) = data
+        if len(fixed_array[0]) == 0 or len(moving_array[0]) == 0:
+            fixed_tile_clip = fixed_array
+            moving_tile_clip = moving_array
+        else:
+            bounds = ((X[i, j] - dx, X[i, j] + dx), (Y[i, j] - dy, Y[i, j] + dy))
+            buffered_bounds = ((X[i, j] - (1 + buffer_fraction), X[i, j] + (1 + buffer_fraction) * dx),
+                               (Y[i, j] - (1 + buffer_fraction) * dy, Y[i, j] + (1 + buffer_fraction) * dy))
+            fixed_tile_clip = crop(fixed_array, bounds)
+            moving_tile_clip = crop(moving_array, buffered_bounds)
+        mean_z = np.mean(get_xyz_from_pdal(fixed_tile_clip), axis=0)[2]
+        (xc, yc) = xyc
+        position = np.array([xc, yc, mean_z])
+        print('done with', (i,j))
+        return icp_calc_displacement(fixed_tile_clip, moving_tile_clip, position) , (i,j)
+
+    from dask.distributed import Client
+    client = Client()
+    dask_tasks = []
+    data = client.scatter((fixed_array, moving_array))
+    for i in range(ny):
+        for j in range(nx):
+            dask_tasks.append(client.submit(calc_u,data,i,j, (X[i,j], Y[i,j])))
+
+    results = client.gather(dask_tasks)
+
+    for ((ux, uy, uz), (i, j)) in results:
+        UX[i, j] = ux
+        UY[i, j] = uy
+        UZ[i, j] = uz
+
+    return UX, UY, UZ
+
+
+
+
 def icp_scale(fixed, moving, x, y, max_scale = 4, buffer_fraction = 0.5):
 
     from numpy.linalg import inv
@@ -223,17 +296,20 @@ def icp_scale(fixed, moving, x, y, max_scale = 4, buffer_fraction = 0.5):
 
     meanz = np.mean(get_xyz_from_pdal(fixed_array), axis = 0)[2]
 
-    def calculate_u((xc, yc), (i, j)):
+    def calculate_u(xyc, ij):
+        (xc, yc) = xyc
+        (i, j) = ij
         position = np.array([xc, yc, meanz])
         u = calc_transform(fixed_array, moving_array, position, max_scale, position) - position
         print('done with: ', (i, j))
         return u, (i, j)
 
     from dask import compute, delayed
+    import dask
 
-    dask_tasks = [delayed(calculate_u)((X[i,j], Y[i,j]), (i, j)) for i in range(ny) for j in range(nx)]
-
-    results = compute(*dask_tasks)
+    with dask.config.set(scheduler='processes'):
+        dask_tasks = [delayed(calculate_u)((X[i,j], Y[i,j]), (i, j)) for i in range(ny) for j in range(nx)]
+        results = compute(*dask_tasks)
 
     for ((ux, uy, uz), (i, j)) in results:
         UX[i,j] = ux
