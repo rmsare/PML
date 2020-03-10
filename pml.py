@@ -1,5 +1,6 @@
 import pdal
 import numpy as np
+from laspy.file import File
 
 def read_file(filename, bounds = None):
 
@@ -30,6 +31,54 @@ def read_file(filename, bounds = None):
     pipeline.execute()
     return pipeline.arrays
 
+def crop_to_tiles(pointcloud, x, y, dx_window, dy_window, buffer_fraction = 0.0):
+    base_dx = np.mean(np.diff(x)) if dx_window is None else dx_window
+    base_dy = np.mean(np.diff(y)) if dy_window is None else dy_window
+
+    (dx, dy) = (base_dx, base_dy)
+
+    X, Y = np.meshgrid(x, y)
+
+    (ny, nx) = X.shape
+    bounds = "["
+
+    for i in range(ny):
+        for j in range(nx):
+            bounds = bounds + """\"([""" + str(X[i, j] - (1 + buffer_fraction)) + "," + str(X[i, j] + \
+                (1 + buffer_fraction) * dx) +"],[" + str(Y[i, j] - (1 + buffer_fraction) * dy) + "," + \
+                     str(Y[i, j] + (1 + buffer_fraction) * dy) + """])\","""
+
+    bounds = "".join(list(bounds)[0:-1] + [']'])
+
+    json_string = u"""
+                {
+                  "pipeline": ["""
+
+    if isinstance(pointcloud, str):
+        json_string += u"""\"""" + pointcloud + """\", """
+
+    json_string += """
+                {
+                        "type":"filters.crop",
+                        "bounds":""" + bounds + """
+                    }
+                  ]
+                }"""
+
+    if isinstance(pointcloud, str):
+        pipeline = pdal.Pipeline(json_string)
+    else:
+        pipeline = pdal.Pipeline(json_string, arrays = pointcloud)
+    pipeline.validate()
+    pipeline.loglevel = 8
+    pipeline.execute()
+    tiles = tuple();
+    for i in range(ny):
+        for j in range(nx):
+            tiles += ((i,j),)
+
+    return tiles, pipeline.arrays
+
 def write_file(filename, arrays):
 
     json = u"""
@@ -51,7 +100,9 @@ def write_file(filename, arrays):
 def get_bounds(arg):
 
     if isinstance(arg, str):
-        json = u"""
+
+        '''
+                        json = u"""
         {
             "pipeline": [
                 \"""" + arg + """\",
@@ -61,8 +112,13 @@ def get_bounds(arg):
                 }
             ]
         }
-        """
         pipeline = pdal.Pipeline(json)
+        '''
+
+        f = File(arg, mode='r')
+        min_values = f.header.min
+        max_values = f.header.max
+        return((min_values[0],max_values[0]),(min_values[1],max_values[1]))
 
     else:
         json = u"""
@@ -76,16 +132,16 @@ def get_bounds(arg):
         }
         """
         pipeline = pdal.Pipeline(json, arrays=arg)
-    pipeline.validate()
-    pipeline.loglevel = 8
-    pipeline.execute()
-    import json as j
-    metadata = j.loads(pipeline.metadata)
-    metadata['metadata']['filters.stats'][0]['bbox']['native']['bbox']['minx']
-    return ((metadata['metadata']['filters.stats'][0]['bbox']['native']['bbox']['minx'],
-            metadata['metadata']['filters.stats'][0]['bbox']['native']['bbox']['maxx']),
-            (metadata['metadata']['filters.stats'][0]['bbox']['native']['bbox']['miny'],
-            metadata['metadata']['filters.stats'][0]['bbox']['native']['bbox']['maxy']))
+        pipeline.validate()
+        pipeline.loglevel = 8
+        pipeline.execute()
+        import json as j
+        metadata = j.loads(pipeline.metadata)
+        metadata['metadata']['filters.stats'][0]['bbox']['native']['bbox']['minx']
+        return ((metadata['metadata']['filters.stats'][0]['bbox']['native']['bbox']['minx'],
+                metadata['metadata']['filters.stats'][0]['bbox']['native']['bbox']['maxx']),
+                (metadata['metadata']['filters.stats'][0]['bbox']['native']['bbox']['miny'],
+                metadata['metadata']['filters.stats'][0]['bbox']['native']['bbox']['maxy']))
 
 def crop(arrays, bounds):
 
@@ -158,21 +214,17 @@ def icp(fixed, moving, center = None):
     XYZ_fixed = get_xyz_from_pdal(fixed_array)
     XYZ_moving = get_xyz_from_pdal(moving_array)
 
-    if center is None:
-        center = np.mean(XYZ_fixed, axis=0)
+    if XYZ_fixed.shape[0] > 5 and XYZ_moving.shape[0] > 5:
+        if center is None:
+            center = np.mean(XYZ_fixed, axis=0)
 
-    import pyicp
+        import pyicp
 
-    transform_matrix, residual = pyicp.icp(XYZ_fixed - center, XYZ_moving - center)
+        transform_matrix, residual = pyicp.icp(XYZ_fixed - center, XYZ_moving - center)
 
-    transformed_array = transform_pdal_array(moving_array, transform_matrix, center = center)
-    return transformed_array, (transform_matrix, center, residual)
+        transformed_array = transform_pdal_array(moving_array, transform_matrix, center = center)
 
-def icp_calc_displacement(fixed_tile, moving_tile, center):
 
-    if len(fixed_tile[0]) > 5 and len(moving_tile[0]) > 5:
-        transformed_array, (transform_matrix, center, residual) = icp(fixed_tile, moving_tile,
-                                                                      center=center)
     else:
         transformed_array, (transform_matrix, center, residual) = ([np.array([])], (np.array([[1.0, 0.0, 0.0, 0.0],
                                                                                               [0.0, 1.0, 0.0, 0.0],
@@ -180,55 +232,44 @@ def icp_calc_displacement(fixed_tile, moving_tile, center):
                                                                                               [0.0, 0.0, 0.0,
                                                                                                1.0]]),
                                                                                     center, None))
+    return transformed_array, (transform_matrix, center, residual)
+
+def icp_calc_displacement(fixed_tile, moving_tile, center):
+
+    transformed_array, (transform_matrix, center, residual) = icp(fixed_tile, moving_tile,
+                                                                      center=center)
 
     from numpy.linalg import inv
     return inv(transform_matrix).T[-1,0:3]
 
 def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_window = None):
 
-    from dask import compute, delayed
-    import dask
-
-    base_dx = np.mean(np.diff(x)) if dx_window is None else dx_window
-    base_dy = np.mean(np.diff(y)) if dy_window is None else dy_window
-
-    (dx, dy) = (base_dx, base_dy)
-
     X, Y = np.meshgrid(x, y)
     UX = np.zeros_like(X)
     UY = np.zeros_like(X)
     UZ = np.zeros_like(X)
-    fixed_array = read_file(fixed) if isinstance(fixed, str) else fixed
-    moving_array = read_file(moving) if isinstance(moving, str) else moving
 
-    (ny, nx) = X.shape
-    from utils import get_xyz_from_pdal
+    (ij, fixed_tiles) = crop_to_tiles(fixed, x, y, dx_window=dx_window, dy_window=dy_window, buffer_fraction=0.0)
+    (ij_m, moving_tiles) = crop_to_tiles(moving, x, y, dx_window=dx_window, dy_window=dy_window, buffer_fraction=buffer_fraction)
 
-    def calc_u(data, i, j, xyc):
-        (fixed_array, moving_array) = data
-        if len(fixed_array[0]) == 0 or len(moving_array[0]) == 0:
-            fixed_tile_clip = fixed_array
-            moving_tile_clip = moving_array
-        else:
-            bounds = ((X[i, j] - dx, X[i, j] + dx), (Y[i, j] - dy, Y[i, j] + dy))
-            buffered_bounds = ((X[i, j] - (1 + buffer_fraction), X[i, j] + (1 + buffer_fraction) * dx),
-                               (Y[i, j] - (1 + buffer_fraction) * dy, Y[i, j] + (1 + buffer_fraction) * dy))
-            fixed_tile_clip = crop(fixed_array, bounds)
-            moving_tile_clip = crop(moving_array, buffered_bounds)
-        mean_z = np.mean(get_xyz_from_pdal(fixed_tile_clip), axis=0)[2]
+    def calc_u(data, ij, xyc):
+        (fixed_tile, moving_tile) = data
+        from utils import get_xyz_from_pdal
+        mean_z = np.mean(get_xyz_from_pdal(fixed_tile), axis=0)[2]
         (xc, yc) = xyc
         position = np.array([xc, yc, mean_z])
-        print('done with', (i,j))
-        return icp_calc_displacement(fixed_tile_clip, moving_tile_clip, position) , (i,j)
+        displacements = icp_calc_displacement(fixed_tile, moving_tile, position)
+        print('done with', ij)
+        return displacements, ij
 
     from dask.distributed import Client
     client = Client()
     dask_tasks = []
-    data = client.scatter((fixed_array, moving_array))
-    for i in range(ny):
-        for j in range(nx):
-            dask_tasks.append(client.submit(calc_u,data,i,j, (X[i,j], Y[i,j])))
 
+    results = list()
+    for i in range(len(ij)):
+        data = client.scatter((fixed_tiles[i], moving_tiles[i]))
+        dask_tasks.append(client.submit(calc_u, data, ij[i], (X[ij[i][0],ij[i][1]], Y[ij[i][0],ij[i][1]])))
     results = client.gather(dask_tasks)
 
     for ((ux, uy, uz), (i, j)) in results:
@@ -237,8 +278,6 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
         UZ[i, j] = uz
 
     return UX, UY, UZ
-
-
 
 
 def icp_scale(fixed, moving, x, y, max_scale = 4, buffer_fraction = 0.5):
