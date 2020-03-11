@@ -257,7 +257,9 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
     print('Done', flush = True)
 
     def calc_u(data, ij, xyc):
-        (fixed_tile, moving_tile) = data
+        (fixed_tiles, moving_tiles) = data
+        fixed_tile = fixed_tiles[ij]
+        moving_tile = moving_tiles[ij]
         from utils import get_xyz_from_pdal
         mean_z = np.mean(get_xyz_from_pdal(fixed_tile), axis=0)[2]
         (xc, yc) = xyc
@@ -269,9 +271,9 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
     from dask.distributed import Client
     client = Client()
     dask_tasks = []
+    data = client.scatter((fixed_tiles, moving_tiles))
 
     for i in range(len(ij)):
-        data = client.scatter((fixed_tiles[i], moving_tiles[i]))
         dask_tasks.append(client.submit(calc_u, data, ij[i], (X[ij[i][0],ij[i][1]], Y[ij[i][0],ij[i][1]])))
     results = client.gather(dask_tasks)
 
