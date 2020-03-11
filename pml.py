@@ -242,47 +242,52 @@ def icp_calc_displacement(fixed_tile, moving_tile, center):
     from numpy.linalg import inv
     return inv(transform_matrix).T[-1,0:3]
 
+def calc_u_tile(data, ij, xyc):
+    (fixed_tiles, moving_tiles) = data
+    fixed_tile = fixed_tiles[ij]
+    moving_tile = moving_tiles[ij]
+    from utils import get_xyz_from_pdal
+    mean_z = np.mean(get_xyz_from_pdal(fixed_tile), axis=0)[2]
+    (xc, yc) = xyc
+    position = np.array([xc, yc, mean_z])
+    displacements = icp_calc_displacement(fixed_tile, moving_tile, position)
+    print('done with', ij, flush = True)
+    return displacements, ij
+
 def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_window = None):
 
-    X, Y = np.meshgrid(x, y)
-    UX = np.zeros_like(X)
-    UY = np.zeros_like(X)
-    UZ = np.zeros_like(X)
-
-    print('Loading acquisition 1.', flush=True)
-    (ij, fixed_tiles) = crop_to_tiles(fixed, x, y, dx_window=dx_window, dy_window=dy_window, buffer_fraction=0.0)
-    print('Done', flush=True)
-    print('Loading acqusition 2.', flush = True)
-    (ij_m, moving_tiles) = crop_to_tiles(moving, x, y, dx_window=dx_window, dy_window=dy_window, buffer_fraction=buffer_fraction)
-    print('Done', flush = True)
-
-    def calc_u(data, ij, xyc):
-        (fixed_tiles, moving_tiles) = data
-        fixed_tile = fixed_tiles[ij]
-        moving_tile = moving_tiles[ij]
-        from utils import get_xyz_from_pdal
-        mean_z = np.mean(get_xyz_from_pdal(fixed_tile), axis=0)[2]
-        (xc, yc) = xyc
-        position = np.array([xc, yc, mean_z])
-        displacements = icp_calc_displacement(fixed_tile, moving_tile, position)
-        print('done with', ij, flush = True)
-        return displacements, ij
-
     from dask.distributed import Client
-    client = Client()
-    dask_tasks = []
-    data = client.scatter((fixed_tiles, moving_tiles))
 
-    for i in range(len(ij)):
-        dask_tasks.append(client.submit(calc_u, data, ij[i], (X[ij[i][0],ij[i][1]], Y[ij[i][0],ij[i][1]])))
-    results = client.gather(dask_tasks)
+    if __name__ == '__main__':
 
-    for ((ux, uy, uz), (i, j)) in results:
-        UX[i, j] = ux
-        UY[i, j] = uy
-        UZ[i, j] = uz
+        client = Client()
 
-    return UX, UY, UZ
+        X, Y = np.meshgrid(x, y)
+        UX = np.zeros_like(X)
+        UY = np.zeros_like(X)
+        UZ = np.zeros_like(X)
+
+        print('Loading acquisition 1.', flush=True)
+        (ij, fixed_tiles) = crop_to_tiles(fixed, x, y, dx_window=dx_window, dy_window=dy_window, buffer_fraction=0.0)
+        print('Done', flush=True)
+        print('Loading acqusition 2.', flush = True)
+        (ij_m, moving_tiles) = crop_to_tiles(moving, x, y, dx_window=dx_window, dy_window=dy_window, buffer_fraction=buffer_fraction)
+        print('Done', flush = True)
+
+
+        dask_tasks = []
+        data = client.scatter((fixed_tiles, moving_tiles))
+
+        for i in range(len(ij)):
+            dask_tasks.append(client.submit(calc_u_tile, data, ij[i], (X[ij[i][0],ij[i][1]], Y[ij[i][0],ij[i][1]])))
+        results = client.gather(dask_tasks)
+
+        for ((ux, uy, uz), (i, j)) in results:
+            UX[i, j] = ux
+            UY[i, j] = uy
+            UZ[i, j] = uz
+
+        return UX, UY, UZ
 
 
 def icp_scale(fixed, moving, x, y, max_scale = 4, buffer_fraction = 0.5):
