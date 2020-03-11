@@ -266,7 +266,6 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
     client = Client()
     dask_tasks = []
 
-    results = list()
     for i in range(len(ij)):
         data = client.scatter((fixed_tiles[i], moving_tiles[i]))
         dask_tasks.append(client.submit(calc_u, data, ij[i], (X[ij[i][0],ij[i][1]], Y[ij[i][0],ij[i][1]])))
