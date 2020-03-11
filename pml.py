@@ -249,8 +249,12 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
     UY = np.zeros_like(X)
     UZ = np.zeros_like(X)
 
+    print('Loading acquisition 1.', flush=True)
     (ij, fixed_tiles) = crop_to_tiles(fixed, x, y, dx_window=dx_window, dy_window=dy_window, buffer_fraction=0.0)
+    print('Done', flush=True)
+    print('Loading acqusition 2.', flush = True)
     (ij_m, moving_tiles) = crop_to_tiles(moving, x, y, dx_window=dx_window, dy_window=dy_window, buffer_fraction=buffer_fraction)
+    print('Done', flush = True)
 
     def calc_u(data, ij, xyc):
         (fixed_tile, moving_tile) = data
@@ -259,7 +263,7 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
         (xc, yc) = xyc
         position = np.array([xc, yc, mean_z])
         displacements = icp_calc_displacement(fixed_tile, moving_tile, position)
-        print('done with', ij)
+        print('done with', ij, flush = True)
         return displacements, ij
 
     from dask.distributed import Client
