@@ -242,10 +242,10 @@ def icp_calc_displacement(fixed_tile, moving_tile, center):
     from numpy.linalg import inv
     return inv(transform_matrix).T[-1,0:3]
 
-def calc_u_tile(data, ij, xyc):
+def calc_u_tile(data, i, ij, xyc):
     (fixed_tiles, moving_tiles) = data
-    fixed_tile = fixed_tiles[ij]
-    moving_tile = moving_tiles[ij]
+    fixed_tile = fixed_tiles[i]
+    moving_tile = moving_tiles[i]
     from utils import get_xyz_from_pdal
     mean_z = np.mean(get_xyz_from_pdal(fixed_tile), axis=0)[2]
     (xc, yc) = xyc
@@ -277,7 +277,7 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
     data = client.scatter((fixed_tiles, moving_tiles))
 
     for i in range(len(ij)):
-        dask_tasks.append(client.submit(calc_u_tile, data, ij[i], (X[ij[i][0],ij[i][1]], Y[ij[i][0],ij[i][1]])))
+        dask_tasks.append(client.submit(calc_u_tile, data, i, ij[i], (X[ij[i][0],ij[i][1]], Y[ij[i][0],ij[i][1]])))
     results = client.gather(dask_tasks)
 
     for ((ux, uy, uz), (i, j)) in results:
