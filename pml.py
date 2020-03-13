@@ -31,7 +31,7 @@ def read_file(filename, bounds = None):
     pipeline.execute()
     return pipeline.arrays
 
-def crop_to_tiles(pointcloud, x, y, client, dx_window, dy_window, buffer_fraction = 0.0):
+def crop_to_tiles(pointcloud, x, y, dx_window, dy_window, buffer_fraction = 0.0, client = None):
 
     from utils import get_xyz_from_pdal
 
@@ -54,8 +54,12 @@ def crop_to_tiles(pointcloud, x, y, client, dx_window, dy_window, buffer_fractio
         row_point_cloud = pointcloud[np.where((pointcloud[:,1] >= (Y[i,0] - dy_half)) & \
             (pointcloud[:,1] <= (Y[i,0] + dy_half)))]
         for j in range(nx):
-            data += (client.scatter(row_point_cloud[np.where((row_point_cloud[:,0] >= (X[0,j] - dx_half)) & \
-                (row_point_cloud[:,0] <= (X[0,j]) + dx_half))]), )
+            if client is not None:
+                data += (client.scatter(row_point_cloud[np.where((row_point_cloud[:,0] >= (X[0,j] - dx_half)) & \
+                    (row_point_cloud[:,0] <= (X[0,j]) + dx_half))]), )
+            else:
+                data += (row_point_cloud[np.where((row_point_cloud[:, 0] >= (X[0, j] - dx_half)) & \
+                                                                 (row_point_cloud[:, 0] <= (X[0, j]) + dx_half))],)
 
     tiles = tuple();
     for i in range(ny):
@@ -238,7 +242,7 @@ def icp_calc_displacement(fixed_tile, moving_tile, center):
     from numpy.linalg import inv
     return inv(transform_matrix).T[-1,0:3]
 
-def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_window = None):
+def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_window = None, use_dask = False):
     from utils import get_xyz_from_pdal
 
     def calc_u_tile(fixed_tile, moving_tile, ij, xyc):
@@ -253,9 +257,11 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
         print('done with', ij, flush = True)
         return displacements, ij
 
-    from dask.distributed import Client
-
-    client = Client(processes = False)
+    if use_dask:
+        from dask.distributed import Client
+        client = Client(processes = False)
+    else:
+        client = None
 
     X, Y = np.meshgrid(x, y)
     UX = np.zeros_like(X)
@@ -263,17 +269,19 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
     UZ = np.zeros_like(X)
 
     print('Loading acquisition 1.', flush=True)
-    (ij, fixed_tiles) = crop_to_tiles(fixed, x, y, client, dx_window=dx_window, dy_window=dy_window, buffer_fraction=0.0)
+    (ij, fixed_tiles) = crop_to_tiles(fixed, x, y, dx_window=dx_window, dy_window=dy_window, buffer_fraction=0.0, client = client)
     print('Done', flush=True)
     print('Loading acqusition 2.', flush = True)
-    (ij_m, moving_tiles) = crop_to_tiles(moving, x, y, client, dx_window=dx_window, dy_window=dy_window, buffer_fraction=buffer_fraction)
+    (ij_m, moving_tiles) = crop_to_tiles(moving, x, y, dx_window=dx_window, dy_window=dy_window, buffer_fraction=buffer_fraction, client = client)
     print('Done', flush = True)
 
-    dask_tasks = []
+    tasks = []
 
     for i in range(len(ij)):
-        dask_tasks.append(client.submit(calc_u_tile, fixed_tiles[i], moving_tiles[i], ij[i], (X[ij[i][0],ij[i][1]], Y[ij[i][0],ij[i][1]])))
-    results = client.gather(dask_tasks)
+        tasks.append(client.submit(calc_u_tile, fixed_tiles[i], moving_tiles[i], ij[i], (X[ij[i][0],ij[i][1]], \
+            Y[ij[i][0],ij[i][1]])) if use_dask else calc_u_tile(fixed_tiles[i], moving_tiles[i], ij[i], (X[ij[i][0],ij[i][1]], Y[ij[i][0],ij[i][1]])))
+
+    results = client.gather(tasks) if use_dask else tasks
 
     for ((ux, uy, uz), (i, j)) in results:
         UX[i, j] = ux

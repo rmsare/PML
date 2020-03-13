@@ -27,7 +27,7 @@ def test_icp_tile(dx = 10, dy = 10, buffer_fraction = 0.2):
     bounds = pml.get_bounds(fixed)
     x = np.arange(bounds[0][0], bounds[0][1], dx)
     y = np.arange(bounds[1][0], bounds[1][1], dy)
-    ux, uy, uz = pml.icp_tile(fixed, moving, x, y, buffer_fraction = buffer_fraction,dx_window=dx*2, dy_window=dy*2)
+    ux, uy, uz = pml.icp_tile(fixed, moving, x, y, buffer_fraction = buffer_fraction,dx_window=dx*2, dy_window=dy*2, use_dask = True)
 
     return x, y, ux, uy, uz
 
