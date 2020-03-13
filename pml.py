@@ -276,13 +276,18 @@ def icp_calc_displacement(fixed_tile, moving_tile, center):
 def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_window = None):
     from utils import get_xyz_from_pdal
 
-    def calc_u_tile(data, ij, xyc):
-        (fixed_tile, moving_tile) = data
+    def calc_u_tile(data, i, ij, xyc):
 
-        mean_z = np.mean(fixed_tile, axis=0)[2]
-        (xc, yc) = xyc
-        position = np.array([xc, yc, mean_z])
-        displacements = icp_calc_displacement(fixed_tile, moving_tile, position)
+        (fixed_tiles, moving_tiles) = data
+        fixed_tile = fixed_tiles[i]
+        moving_tile = moving_tiles[i]
+        if fixed_tile.shape[0] <= 5 or moving_tile.shape[0] <= 5:
+            displacements = np.array([0,0,0])
+        else:
+            mean_z = np.mean(fixed_tile, axis=0)[2]
+            (xc, yc) = xyc
+            position = np.array([xc, yc, mean_z])
+            displacements = icp_calc_displacement(fixed_tile, moving_tile, position)
         print('done with', ij, flush = True)
         return displacements, ij
 
@@ -303,10 +308,11 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
     print('Done', flush = True)
 
     dask_tasks = []
+    data = client.scatter((fixed_tiles, moving_tiles))
 
     for i in range(len(ij)):
-        data = client.scatter((fixed_tiles[i], moving_tiles[i]))
-        dask_tasks.append(client.submit(calc_u_tile, data, ij[i], (X[ij[i][0],ij[i][1]], Y[ij[i][0],ij[i][1]])))
+
+        dask_tasks.append(client.submit(calc_u_tile, data, i, ij[i], (X[ij[i][0],ij[i][1]], Y[ij[i][0],ij[i][1]])))
     results = client.gather(dask_tasks)
 
     for ((ux, uy, uz), (i, j)) in results:
