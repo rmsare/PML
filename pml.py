@@ -32,14 +32,32 @@ def read_file(filename, bounds = None):
     return pipeline.arrays
 
 def crop_to_tiles(pointcloud, x, y, dx_window, dy_window, buffer_fraction = 0.0):
+
+    from utils import get_xyz_from_pdal
+
+    pointcloud = get_xyz_from_pdal(read_file(pointcloud)) if isinstance(pointcloud,str) else \
+        get_xyz_from_pdal(pointcloud[0]) if isinstance(pointcloud, list) else pointcloud if pointcloud.dtype.fields \
+        is None else get_xyz_from_pdal(pointcloud)
+
     base_dx = np.mean(np.diff(x)) if dx_window is None else dx_window
     base_dy = np.mean(np.diff(y)) if dy_window is None else dy_window
 
-    (dx, dy) = (base_dx, base_dy)
+    (dx_half, dy_half) = (base_dx*(1 + buffer_fraction)/2.0, base_dy*(1+buffer_fraction)/2.0)
 
     X, Y = np.meshgrid(x, y)
 
     (ny, nx) = X.shape
+
+    data = tuple()
+
+    for i in range(ny):
+        row_point_cloud = pointcloud[np.where((pointcloud[:,1] >= (Y[i,0] - dy_half)) & \
+            (pointcloud[:,1] <= (Y[i,0] + dy_half)))]
+        for j in range(nx):
+            data += (row_point_cloud[np.where((row_point_cloud[:,0] >= (X[0,j] - dx_half)) & \
+                (row_point_cloud[:,0] <= (X[0,j]) + dx_half))], )
+
+    '''
     bounds = "["
 
     for i in range(ny):
@@ -72,12 +90,14 @@ def crop_to_tiles(pointcloud, x, y, dx_window, dy_window, buffer_fraction = 0.0)
     pipeline.validate()
     pipeline.loglevel = 8
     pipeline.execute()
+    '''
+
     tiles = tuple();
     for i in range(ny):
         for j in range(nx):
             tiles += ((i,j),)
 
-    return tiles, pipeline.arrays
+    return tiles, data
 
 def write_file(filename, arrays):
 
@@ -211,8 +231,8 @@ def icp(fixed, moving, center = None):
     moving_array = read_file(moving) if isinstance(moving, str) else moving
 
 
-    XYZ_fixed = get_xyz_from_pdal(fixed_array)
-    XYZ_moving = get_xyz_from_pdal(moving_array)
+    XYZ_fixed = fixed_array if fixed_array.dtype.fields is None else get_xyz_from_pdal(fixed_array)
+    XYZ_moving = moving_array if moving_array.dtype.fields is None else get_xyz_from_pdal(moving_array)
 
     if XYZ_fixed.shape[0] > 5 and XYZ_moving.shape[0] > 5:
         if center is None:
@@ -236,25 +256,35 @@ def icp(fixed, moving, center = None):
 
 def icp_calc_displacement(fixed_tile, moving_tile, center):
 
-    transformed_array, (transform_matrix, center, residual) = icp(fixed_tile, moving_tile,
-                                                                      center=center)
+    if fixed_tile.shape[0] > 5 and moving_tile.shape[0] > 5:
+        if center is None:
+            center = np.mean(fixed_tile, axis=0)
+
+        import pyicp
+
+        transform_matrix, residual = pyicp.icp(fixed_tile - center, moving_tile - center)
+
+    else:
+        transform_matrix, residual = ((np.array([[1.0, 0.0, 0.0, 0.0],
+                                                 [0.0, 1.0, 0.0, 0.0],
+                                                 [0.0, 0.0, 1.0, 0.0],
+                                                 [0.0, 0.0, 0.0, 1.0]])), None)
 
     from numpy.linalg import inv
     return inv(transform_matrix).T[-1,0:3]
 
-def calc_u_tile(data, i, ij, xyc):
-    (fixed_tiles, moving_tiles) = data
-    fixed_tile = fixed_tiles[i]
-    moving_tile = moving_tiles[i]
-    from utils import get_xyz_from_pdal
-    mean_z = np.mean(get_xyz_from_pdal(fixed_tile), axis=0)[2]
-    (xc, yc) = xyc
-    position = np.array([xc, yc, mean_z])
-    displacements = icp_calc_displacement(fixed_tile, moving_tile, position)
-    print('done with', ij, flush = True)
-    return displacements, ij
-
 def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_window = None):
+    from utils import get_xyz_from_pdal
+
+    def calc_u_tile(data, ij, xyc):
+        (fixed_tile, moving_tile) = data
+
+        mean_z = np.mean(fixed_tile, axis=0)[2]
+        (xc, yc) = xyc
+        position = np.array([xc, yc, mean_z])
+        displacements = icp_calc_displacement(fixed_tile, moving_tile, position)
+        print('done with', ij, flush = True)
+        return displacements, ij
 
     from dask.distributed import Client
 
@@ -272,12 +302,11 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
     (ij_m, moving_tiles) = crop_to_tiles(moving, x, y, dx_window=dx_window, dy_window=dy_window, buffer_fraction=buffer_fraction)
     print('Done', flush = True)
 
-
     dask_tasks = []
-    data = client.scatter((fixed_tiles, moving_tiles))
 
     for i in range(len(ij)):
-        dask_tasks.append(client.submit(calc_u_tile, data, i, ij[i], (X[ij[i][0],ij[i][1]], Y[ij[i][0],ij[i][1]])))
+        data = client.scatter((fixed_tiles[i], moving_tiles[i]))
+        dask_tasks.append(client.submit(calc_u_tile, data, ij[i], (X[ij[i][0],ij[i][1]], Y[ij[i][0],ij[i][1]])))
     results = client.gather(dask_tasks)
 
     for ((ux, uy, uz), (i, j)) in results:
@@ -286,6 +315,7 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
         UZ[i, j] = uz
 
     return UX, UY, UZ
+
 
 
 def icp_scale(fixed, moving, x, y, max_scale = 4, buffer_fraction = 0.5):
