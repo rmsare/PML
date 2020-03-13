@@ -31,7 +31,7 @@ def read_file(filename, bounds = None):
     pipeline.execute()
     return pipeline.arrays
 
-def crop_to_tiles(pointcloud, x, y, dx_window, dy_window, buffer_fraction = 0.0):
+def crop_to_tiles(pointcloud, x, y, client, dx_window, dy_window, buffer_fraction = 0.0):
 
     from utils import get_xyz_from_pdal
 
@@ -54,43 +54,8 @@ def crop_to_tiles(pointcloud, x, y, dx_window, dy_window, buffer_fraction = 0.0)
         row_point_cloud = pointcloud[np.where((pointcloud[:,1] >= (Y[i,0] - dy_half)) & \
             (pointcloud[:,1] <= (Y[i,0] + dy_half)))]
         for j in range(nx):
-            data += (row_point_cloud[np.where((row_point_cloud[:,0] >= (X[0,j] - dx_half)) & \
-                (row_point_cloud[:,0] <= (X[0,j]) + dx_half))], )
-
-    '''
-    bounds = "["
-
-    for i in range(ny):
-        for j in range(nx):
-            bounds = bounds + """\"([""" + str(X[i, j] - (1 + buffer_fraction)) + "," + str(X[i, j] + \
-                (1 + buffer_fraction) * dx) +"],[" + str(Y[i, j] - (1 + buffer_fraction) * dy) + "," + \
-                     str(Y[i, j] + (1 + buffer_fraction) * dy) + """])\","""
-
-    bounds = "".join(list(bounds)[0:-1] + [']'])
-
-    json_string = u"""
-                {
-                  "pipeline": ["""
-
-    if isinstance(pointcloud, str):
-        json_string += u"""\"""" + pointcloud + """\", """
-
-    json_string += """
-                {
-                        "type":"filters.crop",
-                        "bounds":""" + bounds + """
-                    }
-                  ]
-                }"""
-
-    if isinstance(pointcloud, str):
-        pipeline = pdal.Pipeline(json_string)
-    else:
-        pipeline = pdal.Pipeline(json_string, arrays = pointcloud)
-    pipeline.validate()
-    pipeline.loglevel = 8
-    pipeline.execute()
-    '''
+            data += (client.scatter(row_point_cloud[np.where((row_point_cloud[:,0] >= (X[0,j] - dx_half)) & \
+                (row_point_cloud[:,0] <= (X[0,j]) + dx_half))]), )
 
     tiles = tuple();
     for i in range(ny):
@@ -276,11 +241,8 @@ def icp_calc_displacement(fixed_tile, moving_tile, center):
 def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_window = None):
     from utils import get_xyz_from_pdal
 
-    def calc_u_tile(data, i, ij, xyc):
+    def calc_u_tile(fixed_tile, moving_tile, ij, xyc):
 
-        (fixed_tiles, moving_tiles) = data
-        fixed_tile = fixed_tiles[i]
-        moving_tile = moving_tiles[i]
         if fixed_tile.shape[0] <= 5 or moving_tile.shape[0] <= 5:
             displacements = np.array([0,0,0])
         else:
@@ -301,18 +263,16 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
     UZ = np.zeros_like(X)
 
     print('Loading acquisition 1.', flush=True)
-    (ij, fixed_tiles) = crop_to_tiles(fixed, x, y, dx_window=dx_window, dy_window=dy_window, buffer_fraction=0.0)
+    (ij, fixed_tiles) = crop_to_tiles(fixed, x, y, client, dx_window=dx_window, dy_window=dy_window, buffer_fraction=0.0)
     print('Done', flush=True)
     print('Loading acqusition 2.', flush = True)
-    (ij_m, moving_tiles) = crop_to_tiles(moving, x, y, dx_window=dx_window, dy_window=dy_window, buffer_fraction=buffer_fraction)
+    (ij_m, moving_tiles) = crop_to_tiles(moving, x, y, client, dx_window=dx_window, dy_window=dy_window, buffer_fraction=buffer_fraction)
     print('Done', flush = True)
 
     dask_tasks = []
-    data = client.scatter((fixed_tiles, moving_tiles))
 
     for i in range(len(ij)):
-
-        dask_tasks.append(client.submit(calc_u_tile, data, i, ij[i], (X[ij[i][0],ij[i][1]], Y[ij[i][0],ij[i][1]])))
+        dask_tasks.append(client.submit(calc_u_tile, fixed_tiles[i], moving_tiles[i], ij[i], (X[ij[i][0],ij[i][1]], Y[ij[i][0],ij[i][1]])))
     results = client.gather(dask_tasks)
 
     for ((ux, uy, uz), (i, j)) in results:
