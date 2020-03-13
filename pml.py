@@ -255,7 +255,7 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
 
     from dask.distributed import Client
 
-    client = Client()
+    client = Client(processes = False)
 
     X, Y = np.meshgrid(x, y)
     UX = np.zeros_like(X)
