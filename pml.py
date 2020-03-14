@@ -242,7 +242,7 @@ def icp_calc_displacement(fixed_tile, moving_tile, center):
     from numpy.linalg import inv
     return inv(transform_matrix).T[-1,0:3]
 
-def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_window = None, use_dask = False):
+def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_window = None, use_dask = True, distributed = False):
     from utils import get_xyz_from_pdal
 
     def calc_u_tile(fixed_tile, moving_tile, ij, xyc):
@@ -257,9 +257,13 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
         print('done with', ij, flush = True)
         return displacements, ij
 
-    if use_dask:
+    if use_dask and distributed:
         from dask.distributed import Client
         client = Client()
+    elif use_dask:
+        from dask.delayed import delayed
+        from dask.dataframe import compute
+        client = None
     else:
         client = None
 
@@ -279,9 +283,11 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
 
     for i in range(len(ij)):
         tasks.append(client.submit(calc_u_tile, fixed_tiles[i], moving_tiles[i], ij[i], (X[ij[i][0],ij[i][1]], \
-            Y[ij[i][0],ij[i][1]])) if use_dask else calc_u_tile(fixed_tiles[i], moving_tiles[i], ij[i], (X[ij[i][0],ij[i][1]], Y[ij[i][0],ij[i][1]])))
+            Y[ij[i][0],ij[i][1]])) if use_dask and distributed else delayed(calc_u_tile)(fixed_tiles[i], \
+            moving_tiles[i], ij[i], (X[ij[i][0],ij[i][1]], Y[ij[i][0],ij[i][1]])) if use_dask else \
+            calc_u_tile(fixed_tiles[i], moving_tiles[i], ij[i], (X[ij[i][0],ij[i][1]], Y[ij[i][0],ij[i][1]])))
 
-    results = client.gather(tasks) if use_dask else tasks
+    results = client.gather(tasks) if use_dask and distributed else compute(*tasks) if use_dask else tasks
 
     for ((ux, uy, uz), (i, j)) in results:
         UX[i, j] = ux
