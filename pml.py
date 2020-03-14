@@ -223,9 +223,9 @@ def icp(fixed, moving, center = None):
                                                                                     center, None))
     return transformed_array, (transform_matrix, center, residual)
 
-def icp_calc_displacement(fixed_tile, moving_tile, center):
+def icp_calc_displacement(fixed_tile, moving_tile, center, min_num_points = 15):
 
-    if fixed_tile.shape[0] > 5 and moving_tile.shape[0] > 5:
+    if fixed_tile.shape[0] > min_num_points and moving_tile.shape[0] > min_num_points:
         if center is None:
             center = np.mean(fixed_tile, axis=0)
 
@@ -242,12 +242,13 @@ def icp_calc_displacement(fixed_tile, moving_tile, center):
     from numpy.linalg import inv
     return inv(transform_matrix).T[-1,0:3]
 
-def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_window = None, use_dask = True, distributed = False):
+def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_window = None, use_dask = True, \
+             distributed = False, min_num_points = 15):
     from utils import get_xyz_from_pdal
 
     def calc_u_tile(fixed_tile, moving_tile, ij, xyc):
 
-        if fixed_tile.shape[0] <= 5 or moving_tile.shape[0] <= 5:
+        if fixed_tile.shape[0] <= min_num_points or moving_tile.shape[0] <= min_num_points:
             displacements = np.array([0,0,0])
         else:
             mean_z = np.mean(fixed_tile, axis=0)[2]
