@@ -259,7 +259,7 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
 
     if use_dask:
         from dask.distributed import Client
-        client = Client(processes = False)
+        client = Client()
     else:
         client = None
 
