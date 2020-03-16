@@ -247,7 +247,8 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
     from utils import get_xyz_from_pdal
 
     def calc_u_tile(fixed_tile, moving_tile, ij, xyc):
-
+        fixed_tile = np.unique(fixed_tile, axis = 0)
+        moving_tile = np.unique(moving_tile, axis = 0)
         if fixed_tile.shape[0] <= min_num_points or moving_tile.shape[0] <= min_num_points:
             displacements = np.array([0,0,0])
         else:

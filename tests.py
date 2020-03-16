@@ -31,6 +31,14 @@ def test_icp_tile(dx = 10, dy = 10, buffer_fraction = 0.2):
 
     return x, y, ux, uy, uz
 
+def test_icp(fixed_filename = 'fixed_tile.npy', moving_filename = 'moving_tile.npy', xyc = (321342.285, 4164393.245)):
+    fixed = np.unique(np.load(fixed_filename), axis = 0)
+    moving = np.unique(np.load(moving_filename), axis = 0)
+    mean_z = np.mean(fixed, axis=0)[2]
+    (xc, yc) = xyc
+    position = np.array([xc, yc, mean_z])
+    return pml.icp_calc_displacement(fixed, moving, position)
+
 def create_test_dataset(in_pt_cloud_filename = None, x_a = 1E-3, x_b = 0.5E-3, x_c = -1.2E-3, x_d = -0.8E-1, x_e = -1.0E-1, x_f = 1.0,
                         y_a = -1.5E-4, y_b = -1.0E-4, y_c = 0.72E-3, y_d = 0.75E-1, y_e = 1.4E-1, y_f = -1.0,
                         z_a = 1E-4, z_b = -4E-4, z_c = -6E-4, z_d = -1E-1, z_e = 1E-1, z_f = 1.0):
