@@ -33,7 +33,7 @@ def read_file(filename, bounds = None):
 
 def crop_to_tiles(pointcloud, x, y, dx_window, dy_window, buffer_fraction = 0.0, client = None):
 
-    from utils import get_xyz_from_pdal
+    from .utils import get_xyz_from_pdal
 
     pointcloud = get_xyz_from_pdal(read_file(pointcloud)) if isinstance(pointcloud,str) else \
         get_xyz_from_pdal(pointcloud[0]) if isinstance(pointcloud, list) else pointcloud if pointcloud.dtype.fields \
@@ -187,14 +187,14 @@ def transform(arg, transformation_matrix):
 
 def transform_pdal_array(pdal_array, transform_matrix, center = np.array([0.0, 0.0, 0.0])):
 
-    from utils import get_xyz_from_pdal, transform_xyz, put_xyz_to_pdal
+    from .utils import get_xyz_from_pdal, transform_xyz, put_xyz_to_pdal
     xyz = get_xyz_from_pdal(pdal_array)
     xyz_transformed = transform_xyz(xyz, transform_matrix, center = center)
     return put_xyz_to_pdal(pdal_array, xyz_transformed)
 
 def icp(fixed, moving, center = None):
 
-    from utils import get_xyz_from_pdal
+    from .utils import get_xyz_from_pdal
 
     fixed_array = read_file(fixed) if isinstance(fixed, str) else fixed
     moving_array = read_file(moving) if isinstance(moving, str) else moving
@@ -244,7 +244,7 @@ def icp_calc_displacement(fixed_tile, moving_tile, center, min_num_points = 15):
 
 def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_window = None, use_dask = True, \
              distributed = False, min_num_points = 15):
-    from utils import get_xyz_from_pdal
+    from .utils import get_xyz_from_pdal
 
     def calc_u_tile(fixed_tile, moving_tile, ij, xyc):
         fixed_tile = np.unique(fixed_tile, axis = 0)
@@ -351,7 +351,7 @@ def icp_scale(fixed, moving, x, y, max_scale = 4, buffer_fraction = 0.5):
     UZ = np.zeros_like(X)
 
     (ny, nx) = X.shape
-    from utils import get_xyz_from_pdal
+    from .utils import get_xyz_from_pdal
 
     meanz = np.mean(get_xyz_from_pdal(fixed_array), axis = 0)[2]
 
@@ -380,7 +380,7 @@ def icp_scale(fixed, moving, x, y, max_scale = 4, buffer_fraction = 0.5):
 def icp_recursive(fixed, moving, min_dx = 1.0, min_size_to_thread = 1.5E4, buffer_fraction=0.5):
 
     def find_center(tile, fixed_array):
-        from utils import get_xyz_from_pdal
+        from .utils import get_xyz_from_pdal
         center_xy = ((tile[0][1] + tile[0][0]) / 2.0, (tile[1][1] + tile[1][0]) / 2.0)
         if fixed_array is not None:
             xyz = get_xyz_from_pdal(fixed_array)
@@ -414,7 +414,7 @@ def icp_recursive(fixed, moving, min_dx = 1.0, min_size_to_thread = 1.5E4, buffe
 
         def launch_nodask(fixed_tile_clip, graph, parent_node, min_dx, center = center):
 
-            from utils import tiles_for_bounds
+            from .utils import tiles_for_bounds
 
             (tiles, buffered_tiles) = tiles_for_bounds(tile_extent, buffer_fraction=buffer_fraction)
             transformed_array, (transform_matrix, center, residual) = ([np.array([])], (np.array([[1.0, 0.0, 0.0, 0.0],
@@ -429,7 +429,7 @@ def icp_recursive(fixed, moving, min_dx = 1.0, min_size_to_thread = 1.5E4, buffe
 
         def launch_dask(fixed_tile_clip, moving_tile_clip, graph, parent_node, min_dx, center = center):
 
-            from utils import tiles_for_bounds
+            from .utils import tiles_for_bounds
             from dask import compute, delayed
 
             transformed_array, (transform_matrix, center, residual) = icp(fixed_tile_clip, moving_tile_clip,
@@ -460,7 +460,7 @@ def icp_recursive(fixed, moving, min_dx = 1.0, min_size_to_thread = 1.5E4, buffe
     transformed_array, (transform_matrix, center, residual) = icp(fixed_array, moving_array, center = center)
     parent = graph.add_node(center, transform_matrix, dimensions, residual)
 
-    from utils import tiles_for_bounds
+    from .utils import tiles_for_bounds
 
     (tiles, buffered_tiles) = tiles_for_bounds(bounds, buffer_fraction=buffer_fraction)
 
