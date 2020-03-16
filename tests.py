@@ -1,4 +1,4 @@
-import pml
+import PML as pml
 import numpy as np
 
 def test_icp_recursive():
