@@ -21,13 +21,13 @@ def test_icp_scale(dx = 10, dy = 10, max_scale = 4, buffer_fraction = 0.2):
 
     return x, y, ux, uy, uz
 
-def test_icp_tile(dx = 10, dy = 10, buffer_fraction = 0.2):
+def test_icp_tile(dx = 10, dy = 10, buffer_fraction = 0.2, num_trials = 1):
     fixed = pml.read_file('hsl_101419_small.las')
     moving = pml.read_file('hsl_101419_small_shift.las')
     bounds = pml.get_bounds(fixed)
     x = np.arange(bounds[0][0], bounds[0][1], dx)
     y = np.arange(bounds[1][0], bounds[1][1], dy)
-    ux, uy, uz = pml.icp_tile(fixed, moving, x, y, buffer_fraction = buffer_fraction,dx_window=dx*2, dy_window=dy*2, use_dask = True)
+    ux, uy, uz = pml.icp_tile(fixed, moving, x, y, buffer_fraction = buffer_fraction,dx_window=dx*2, dy_window=dy*2, use_dask = True, num_trials = num_trials)
 
     return x, y, ux, uy, uz
 

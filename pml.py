@@ -223,7 +223,7 @@ def icp(fixed, moving, center = None):
                                                                                     center, None))
     return transformed_array, (transform_matrix, center, residual)
 
-def icp_calc_displacement(fixed_tile, moving_tile, center, min_num_points = 15):
+def icp_calc_displacement(fixed_tile, moving_tile, center, min_num_points = 15, num_trials = 1):
 
     if fixed_tile.shape[0] > min_num_points and moving_tile.shape[0] > min_num_points:
         if center is None:
@@ -231,7 +231,16 @@ def icp_calc_displacement(fixed_tile, moving_tile, center, min_num_points = 15):
 
         import pyicp
 
-        transform_matrix, residual = pyicp.icp(fixed_tile - center, moving_tile - center)
+        residual = None
+        transform_matrix = None
+        this_center = center
+
+        for _ in range(num_trials):
+            this_transform_matrix, this_residual = pyicp.icp(fixed_tile - this_center, moving_tile - this_center)
+            if residual is None or np.abs(this_residual) < residual:
+                residual = this_residual
+                transform_matrix = this_transform_matrix
+            this_center = center + 1E-4*np.random.randn(3)
 
     else:
         transform_matrix, residual = ((np.array([[1.0, 0.0, 0.0, 0.0],
@@ -243,7 +252,7 @@ def icp_calc_displacement(fixed_tile, moving_tile, center, min_num_points = 15):
     return inv(transform_matrix).T[-1,0:3]
 
 def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_window = None, use_dask = True, \
-             distributed = False, min_num_points = 15):
+             distributed = False, min_num_points = 15, num_trials = 1):
     from .utils import get_xyz_from_pdal
 
     def calc_u_tile(fixed_tile, moving_tile, ij, xyc):
@@ -255,7 +264,7 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
             mean_z = np.mean(fixed_tile, axis=0)[2]
             (xc, yc) = xyc
             position = np.array([xc, yc, mean_z])
-            displacements = icp_calc_displacement(fixed_tile, moving_tile, position)
+            displacements = icp_calc_displacement(fixed_tile, moving_tile, position, num_trials = num_trials)
         print('done with', ij, flush = True)
         return displacements, ij
 
