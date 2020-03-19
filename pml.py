@@ -260,6 +260,7 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
         moving_tile = np.unique(moving_tile, axis = 0) if moving_tile.shape[0] > 0 else moving_tile
         if fixed_tile.shape[0] <= min_num_points or moving_tile.shape[0] <= min_num_points:
             displacements = np.array([0,0,0])
+            residual = np.nan
         else:
             mean_z = np.mean(fixed_tile, axis=0)[2]
             (xc, yc) = xyc
