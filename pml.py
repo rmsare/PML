@@ -249,7 +249,7 @@ def icp_calc_displacement(fixed_tile, moving_tile, center, min_num_points = 15, 
                                                  [0.0, 0.0, 0.0, 1.0]])), None)
 
     from numpy.linalg import inv
-    return inv(transform_matrix).T[-1,0:3]
+    return inv(transform_matrix).T[-1,0:3], residual
 
 def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_window = None, use_dask = True, \
              distributed = False, min_num_points = 15, num_trials = 1):
@@ -264,9 +264,9 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
             mean_z = np.mean(fixed_tile, axis=0)[2]
             (xc, yc) = xyc
             position = np.array([xc, yc, mean_z])
-            displacements = icp_calc_displacement(fixed_tile, moving_tile, position, num_trials = num_trials)
+            displacements, residual = icp_calc_displacement(fixed_tile, moving_tile, position, num_trials = num_trials)
         print('done with', ij, flush = True)
-        return displacements, ij
+        return displacements, residual, ij
 
     if use_dask and distributed:
         from dask.distributed import Client
@@ -282,6 +282,7 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
     UX = np.zeros_like(X)
     UY = np.zeros_like(X)
     UZ = np.zeros_like(X)
+    residuals = np.zeros_like(X)
 
     print('Loading acquisition 1.', flush=True)
     (ij, fixed_tiles) = crop_to_tiles(fixed, x, y, dx_window=dx_window, dy_window=dy_window, buffer_fraction=0.0, client = client)
@@ -300,12 +301,13 @@ def icp_tile(fixed, moving, x, y, buffer_fraction = 0.5, dx_window = None, dy_wi
 
     results = client.gather(tasks) if use_dask and distributed else compute(*tasks) if use_dask else tasks
 
-    for ((ux, uy, uz), (i, j)) in results:
+    for ((ux, uy, uz), residual, (i, j)) in results:
         UX[i, j] = ux
         UY[i, j] = uy
         UZ[i, j] = uz
+        residuals[i,j] = residual
 
-    return UX, UY, UZ
+    return UX, UY, UZ, residuals
 
 
 
