@@ -39,6 +39,21 @@ def test_icp(fixed_filename = 'fixed_tile.npy', moving_filename = 'moving_tile.n
     position = np.array([xc, yc, mean_z])
     return pml.icp_calc_displacement(fixed, moving, position)
 
+def test_dislocation(filename = 'hsl_101419_small.las', strike = 320, dip = 30, ss = 20.0, ds = 0.0, d = 0.01):
+    from dislocation import deform_point_cloud
+    from utils import get_xyz_from_pdal
+    import matplotlib.pylab as plt
+
+    pointcloud = get_xyz_from_pdal(pml.read_file(filename))
+    pointcloud = pointcloud[0::1000,:]
+    deformed_pointcloud = get_xyz_from_pdal(deform_point_cloud(filename, strike, dip, u_ss = ss, u_ds = ds, d = d))[0::1000,:]
+
+    plt.figure()
+    plt.plot(pointcloud[:,0],pointcloud[:,1], 'k.')
+    plt.figure()
+    plt.plot(deformed_pointcloud[:,0], deformed_pointcloud[:,1], 'k.')
+    plt.show()
+
 def create_test_dataset(in_pt_cloud_filename = None, x_a = 1E-3, x_b = 0.5E-3, x_c = -1.2E-3, x_d = -0.8E-1, x_e = -1.0E-1, x_f = 1.0,
                         y_a = -1.5E-4, y_b = -1.0E-4, y_c = 0.72E-3, y_d = 0.75E-1, y_e = 1.4E-1, y_f = -1.0,
                         z_a = 1E-4, z_b = -4E-4, z_c = -6E-4, z_d = -1E-1, z_e = 1E-1, z_f = 1.0):
